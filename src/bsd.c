@@ -98,9 +98,11 @@ void internal_finalize_bsd_addr(struct bsd_addr_t *addr) {
     // parse, so to speak, the address
     if (addr->mem.ss_family == AF_INET6) {
         addr->ip = (char *) &((struct sockaddr_in6 *) addr)->sin6_addr;
+        addr->port = ((struct sockaddr_in6 *) addr)->sin6_port;
         addr->ip_length = sizeof(struct in6_addr);
     } else if (addr->mem.ss_family == AF_INET) {
         addr->ip = (char *) &((struct sockaddr_in *) addr)->sin_addr;
+        addr->port = ((struct sockaddr_in *) addr)->sin_port;
         addr->ip_length = sizeof(struct in_addr);
     } else {
         addr->ip_length = 0;
@@ -122,6 +124,10 @@ char *bsd_addr_get_ip(struct bsd_addr_t *addr) {
 
 int bsd_addr_get_ip_length(struct bsd_addr_t *addr) {
     return addr->ip_length;
+}
+
+int bsd_addr_get_port(struct bsd_addr_t *addr) {
+    return addr->port;
 }
 
 // called by dispatch_ready_poll
@@ -152,6 +158,12 @@ int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     return recv(fd, buf, length, flags);
 }
 
+int bsd_recvfrom(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags, struct bsd_addr_t *addr) {
+    addr->len = sizeof(addr->mem);
+    int ret = recvfrom(fd, buf, length, flags, (struct sockaddr *) addr, &addr->len);
+    return ret;
+}
+
 int bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
 
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
@@ -174,6 +186,10 @@ int bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_mo
 #endif
 }
 
+int bsd_sendto(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int flags, struct bsd_addr_t *addr) {
+    return sendto(fd, buf, length, flags, (struct sockaddr *) addr, addr->len);
+}
+
 int bsd_would_block() {
 #ifdef _WIN32
     return WSAGetLastError() == WSAEWOULDBLOCK;
@@ -190,7 +206,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
     hints.ai_flags = AI_PASSIVE;
     hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+    if(options & LIBUS_LISTEN_UDP)
+        hints.ai_socktype = SOCK_DGRAM;
+    else
+        hints.ai_socktype = SOCK_STREAM;
 
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
@@ -236,7 +255,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (SETSOCKOPT_PTR_TYPE) &disabled, sizeof(disabled));
 #endif
 
-    if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || listen(listenFd, 512)) {
+    if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || (!(options & LIBUS_LISTEN_UDP) && listen(listenFd, 512))) {
         bsd_close_socket(listenFd);
         freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;

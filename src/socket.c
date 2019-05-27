@@ -105,6 +105,17 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
     return written < 0 ? 0 : written;
 }
 
+int us_socket_sendto(struct us_socket_t *s, const char *data, int length, char *addr, int addr_length) {
+    if (us_socket_is_closed(0, s) || !s->udp) {
+        return 0;
+    }
+
+    int written = bsd_sendto(us_poll_fd(&s->p), data, length, 0, (struct bsd_addr_t *)addr);
+
+    return written < 0 ? 0 : written;
+}
+
+/* This is an experimentation for new SSL-routing */
 void *us_socket_ext(int ssl, struct us_socket_t *s) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
